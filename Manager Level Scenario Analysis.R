@@ -1,6 +1,8 @@
 library(xlsx)
 library(PerformanceAnalytics)
 library(dygraphs)
+library(MASS)
+library(quantmod)
 
 ############S
 
@@ -38,11 +40,11 @@ er.facs = ((1 +er.facs) ^(1/12)-1)
 lag = 25 #0 as instantaneous + 24 lags
 
 
-init.commit.out = 330000000
-commit.pace = .05 #5% per year
+init.commit.out = 970000000
+commit.pace = .05 #5% per year#
 commit.function = function(LTP.NAV, commit.pace) {LTP.NAV * ((1 + commit.pace)^(1/12)-1)}
 #linear calls over 3 years
-call.function = function(commit.level) {commit.level / 36}
+call.function = function(commit.level) {commit.level / 40}
 
 private.wts.init = as.data.frame(init.wts[which(init.class[,2] == "PE" | 
                                                   init.class[,2] == "RA"),])
@@ -58,6 +60,8 @@ index.cmalt = which(init.class[,2] == "CMALT")
 index.gbond = which(init.class[,2] == "GBOND")
 index.pe = which(init.class[,2] == "PE")
 index.ra = which(init.class[,2] == "RA")
+index.re = which(init.class[,1] == "Real Estate")
+index.resources = which(init.class[,1] == "Resources")
 #Set up initial constraints
 init.NAV = 7500000000
 init.NAV.mgrs = t(init.NAV * t(in.wts$Weight))
@@ -75,7 +79,7 @@ liquidity.LTP = liquidity.LTP / max(liquidity.LTP[,1])
 time = seq(from = as.Date("2007-12-31")+1, to = as.Date("2010-02-28")+1,by = "1 month") -1
 
 #specify functions
-payout.function = function(NAV) {(((1+.05)^(1/12)-1) * NAV)}
+payout.function = function(NAV) {(((1+.01)^(1/12)-1) * NAV)}
 capitalcall.function = function(CASH) {CASH * 1}
 distribution.function = function(Private.NAV) {Private.NAV/(15*12)}
 
@@ -187,7 +191,8 @@ for(i in 1:maxt){
 NAV.mgrs = as.matrix(NAV.mgrs)
 
 private.total = rowSums(NAV.mgrs[,index.private]) + commitments
-private.prc.LTP = xts(private.total/ NAV.LTP, order.by = time2)
+private.prc.LTP = xts(rowSums(NAV.mgrs[,index.private]), order.by = time2)
+private.mv = xts(rowSums(NAV.mgrs[,index.private])/ NAV.LTP, order.by = time2)
 commit.prc.LTP = xts(commitments/ NAV.LTP, order.by = time2)
 cash.amount = xts(NAV.mgrs[,"Cash"], order.by = time2)
 cash.prc.LTP = xts(NAV.mgrs[,"Cash"] / NAV.LTP, order.by = time2)
@@ -198,9 +203,12 @@ cmalt.total = xts(rowSums(NAV.mgrs[,index.cmalt]), order.by = time2)
 gbond.total = xts(rowSums(NAV.mgrs[,index.gbond]), order.by = time2)
 pe.total = xts(rowSums(NAV.mgrs[,index.pe]), order.by = time2)
 ra.total = xts(rowSums(NAV.mgrs[,index.ra]), order.by = time2)
+re.total = xts(NAV.mgrs[,index.re], order.by = time2)
+resources.total = xts(NAV.mgrs[,index.resources], order.by = time2)
 
-all.classes.total = do.call(merge.xts, list(pubeq.total, lseq.total, cmalt.total, gbond.total, pe.total, ra.total))
-colnames(all.classes.total) = c("Pub Equity", "LS Equity", "CMALT", "Cash and Bonds", "PE", "Real Assets")
+
+all.classes.total = do.call(merge.xts, list(pubeq.total, lseq.total, cmalt.total, gbond.total, pe.total, re.total, resources.total))
+colnames(all.classes.total) = c("Pub Equity", "LS Equity", "CMALT", "Cash and Bonds", "PE", "Real Estate", "Resources")
 
 
 liquidity.3 = t(apply(NAV.mgrs, MARGIN = 1, FUN = function(x) x * liquidity.LTP[,1]))
@@ -217,24 +225,15 @@ total.liquidity.historical.graph = merge.xts(merge.xts(total.liquidity.3 / NAV.L
 
 NAV.LTP = as.xts(NAV.LTP, colnames = "LTP NAV", order.by = time2)
 
-dygraph(NAV.LTP, main = "LTP NAV")
-dygraph(private.prc.LTP, "Private Aggregate as % of LTP")
-dygraph(commit.prc.LTP, main = "Commitments as % of LTP")
-dygraph(cash.prc.LTP, "Cash as % of LTP")
-dygraph(cash.amount, "Cash Amount in USD")
-dygraph(total.liquidity.historical.graph, "Total Liquidity as % of LTP by Timing of Availability")
-dygraph(pubeq.total, "Total Public Equity")
-dygraph(lseq.total, "Total L/S Equity")
-dygraph(cmalt.total,"Total CMALT")
-dygraph(gbond.total, "Total Cash and Bonds")
-dygraph(pe.total, "Total Private Equity")
-dygraph(ra.total, "Total Real Assets")
-dygraph(all.classes.total)
-
-dygraph(xts(apply(all.classes.total* 100, MARGIN = 2,FUN =  function(x)x / NAV.LTP), order.by = time2), "Asset Classes as % of LTP") %>%
-  dyOptions(stackedGraph = TRUE, fillGraph = TRUE)
 
 
+write.zoo(NAV.LTP, "NAV.LTP.csv", sep= ",")
+write.zoo(commit.prc.LTP, "commit.prc.LTP.csv", sep= ",")
+write.zoo(all.classes.total, "all.classes.total.csv", sep=",")
+write.zoo(commit.prc.LTP, "commit.prc.LTP", sep = ",")
+write.zoo(commit.prc.LTP, "commit.prc.LTP", sep = ",")
+write.zoo(private.mv, "private.mv.csv", sep = ",")
+write.zoo(total.liquidity.historical.graph, "total.liquidity.historical.csv", sep = ",")
 
 ######################################################
 #Begin MC sim
@@ -275,9 +274,15 @@ mc.n = duration.stress + lag
 
 stress.facs = array(NA, dim = c(nsims, ncol(init.facs), mc.n))
 
+#use the stressed Cov matrix to start the stressed period and the normal one otherwise. 
 for (i in 1:nsims){
-  stress.facs[i,,] = rep(t(as.matrix(er.facs)), mc.n) + 
-    matrix(rnorm(mc.n *  length(er.facs)),nrow = mc.n) %*% chol(cov.facs.stressed)
+  if (i <= lag){
+    stress.facs[i,,] = t(matrix(mvrnorm(n = mc.n, mu = er.facs, Sigma = cov.facs.avg),
+                                ncol = ncol(init.facs), byrow = FALSE))
+  }else{
+    stress.facs[i,,] = t(matrix(mvrnorm(n = mc.n, mu = er.facs, Sigma = cov.facs.stressed),
+                                ncol = ncol(init.facs), byrow = FALSE))
+  }
 }
 
 betas.mgr.mc = cbind(as.matrix(init.betas[,3:7]), rep(1, length(init.betas[,1])))
@@ -370,7 +375,7 @@ for (j in 1:nsims){
     liquidity.mc.6[j,i,] = as.matrix(t(liquidity.LTP[,2] * NAV.mgrs.mc[j,i,]))
     liquidity.mc.12[j,i,] = as.matrix(t(liquidity.LTP[,3] * NAV.mgrs.mc[j,i,]))
     
-    
+                                               
   }
   private.total.mc[j,] = rowSums(NAV.mgrs.mc[j,,index.private]) + commitments.mc[j,]
   pubeq.total.mc[j,] = rowSums(NAV.mgrs.mc[j,,index.pubeq])
@@ -406,10 +411,10 @@ for(i in 1: length(quantiles.set)){
   temp = (round(quantiles.min * nsims)[i] : round(quantiles.max * nsims)[i])
   names(temp) = rep(quantiles.set[i], length(temp))
   if (i == 1){ quantiles.lookup = temp} 
-  else{
-    quantiles.lookup = append(quantiles.lookup, temp)
+    else{
+      quantiles.lookup = append(quantiles.lookup, temp)
+    }
   }
-}
 
 quantiles = sort(NAV.LTP.mc[,(duration.stress+1)], decreasing = FALSE)[quantiles.lookup]
 index.mc = which((NAV.LTP.mc[,(duration.stress+1)]) %in% (quantiles))
@@ -483,8 +488,13 @@ dygraph(liquidity.mc.3.out / NAV.LTP.mc.quant.out * 100, "3-Mo Liquidity, % of L
 dygraph(liquidity.mc.6.out / NAV.LTP.mc.quant.out * 100, "6-Mo Liquidity, % of LTP")
 dygraph(liquidity.mc.12.out / NAV.LTP.mc.quant.out * 100, "12-Mo Liquidity, % of LTP")
 
+dygraph(pubeq.mc.quant.out)
+
 # private.total = rowSums(NAV.mgrs[,index.private]) + commitments.mc[j,]
 # private.prc.LTP = xts(private.total/ NAV.LTP, order.by = time2)
 # commit.prc.LTP = xts(commitments/ NAV.LTP, order.by = time2)
 # cash.amount = xts(NAV.mgrs[,"Cash"], order.by = time2)
 # cash.prc.LTP = xts(NAV.mgrs[,"Cash"] / NAV.LTP, order.by = time2)
+
+
+
